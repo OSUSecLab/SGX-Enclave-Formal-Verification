@@ -1,0 +1,422 @@
+theory sawtooth
+begin
+
+// multiset allows +1 operation on counter values 
+builtins: multiset, symmetric-encryption, hashing, signing, asymmetric-encryption
+
+
+/*
+  About: Sawtooth
+  https://github.com/hyperledger/sawtooth-core/releases/tag/v1.0.5
+   
+  Status: complete
+  Run command:  
+    tamarin-prover --heuristic=s --stop-on-trace=DFS saw.spthy --prove
+  ==============================================================================
+  summary of summaries:
+
+  analyzed: saw.spthy
+
+    createMC_for_every_incMC_ind (all-traces): verified (19 steps)
+    MC_value_never_equals_ind (all-traces): verified (894 steps)
+    honest_run_plain (exists-trace): verified (31 steps)
+    cert_for_each_node_sanity_plain (exists-trace): verified (23 steps)
+    unique_cert_per_node_same_valMC_ref_plain (all-traces): falsified - found trace (13 steps)
+
+  ==============================================================================
+
+    ~ 1m 43sec
+
+
+*/
+
+// Acronyms
+
+    // PSE -- Platform Service Enclave
+    // ME -- Management Engine
+    // sk_ISV, pk_ISV -- ISV's RSA asymmetric keys
+    // sk_user, pk_user --User's RSA asymmetric keys
+    // mcid -- Monotonic Counter uuid
+    // MC_owner_policy -- Owners for Monotonic Counters
+
+
+
+// allows equlaity check 
+restriction Equality:
+  "All x y #i. Eql(x,y) @i ==> x = y"
+
+
+
+// Using pointers to maintain memories was originally suggested by Benjamin Kiesl --- https://groups.google.com/g/tamarin-prover/c/XAf-mO86d2Y/m/-3ri-zEaAwAJ
+// We modified the suggestion for our case
+
+// Restriction over Monotonic Counter (MC) operations for consistent Read/Increment operations
+// for each owner specific MC instance. 
+
+
+//  old MC values should not be allowed to read
+restriction FreedMemoryCannotBeAccessed:
+     "All owner pointer pointer_new val val_old val_new #i #j. 
+    Read(owner, pointer, val) @ i 
+  & Free(owner, pointer, pointer_new, val_old, val_new) @ j ==> #i < #j"
+
+
+// Each MC value (pointer) should be updated only once
+restriction MemoryCanBeFreedOnlyOnce:
+    "All owner pointer pointer_new1 val_old1 val_new1 pointer_new2 val_old2 val_new2  #i #j. 
+    Free(owner, pointer, pointer_new1, val_old1, val_new1) @ i 
+  & Free(owner, pointer, pointer_new2, val_old2, val_new2) @ j ==> #i = #j"
+
+
+//-------------------------- Enclave Setup and Sign-up Phase
+
+// Create ISV, User and enclave specific IDs and secrets 
+// and associate a monotonic counter with it
+
+// Each instance of this rule  = one ISV
+// Association Tree L1 -- ISV
+
+rule ISV_L1 [color=#F7E6C5]:
+let pk_ISV = pk(~sk_ISV)    
+in
+[Fr(~sk_ISV)]
+
+--[ISV_L1(~sk_ISV, pk_ISV)]-> 
+
+[
+ !ISV_E_Singup1(~sk_ISV, pk_ISV),  
+ Out(pk_ISV)]
+
+
+// Each instance of this rule  = one node, user and platform
+// Association Tree L2 -- platform, MRENCLAVE, node users
+rule Signup_L2a [color=#F7E6C5]:
+
+[!ISV_E_Singup1(sk_ISV, pk_ISV), Fr(~platform_sec), Fr(~sk_user), Fr(~mrenclave), Fr(~mc_session)]
+
+--[Signup_L2a(sk_ISV, pk_ISV, ~platform_sec, ~sk_user, ~mrenclave),
+   Node(~platform_sec)]-> // using this to enforce one node in honest run lemma
+
+[Sgx_create_MC(<~platform_sec, pk_ISV>, ~mc_session),
+ Signup_Mem_12(sk_ISV, pk_ISV, ~platform_sec,  ~mrenclave, ~sk_user, ~mc_session)]
+
+                                        // MC Create operation
+                                        rule PSE_CreateMC [color=#DBF6FA]:
+                                        [ Fr(~mcid), Fr(~ptr), Sgx_create_MC(MC_owner_policy, label) ] 
+                                        // MC_owner_policy derived from pk_ISV and platform combination 
+
+                                        --[ PSE_CreateMC(MC_owner_policy, ~mcid, ~ptr, '1')]->
+                                        
+                                        [!Priv_mem_ME(MC_owner_policy, ~mcid, ~ptr, '1'),
+                                          Sgx_create_MC_done(MC_owner_policy, ~mcid, label, '1')
+                                        ]
+
+// Finish creating MC   
+rule Signup_L2b [color=#F7E6C5]:
+let seal_key = h(<~platform_sec, ~mrenclave, 'seal'>)  // sawtooth choses SGX_KEYPOLICY_MRENCLAVE 
+    pk_user = pk(~sk_user)
+in
+[Sgx_create_MC_done(<~platform_sec, pk_ISV>, ~mcid, ~mc_session, initMC),
+Signup_Mem_12(sk_ISV,  pk_ISV, ~platform_sec, ~mrenclave, ~sk_user, ~mc_session)]
+
+--[Signup_L2b(sk_ISV, pk_ISV, ~platform_sec, ~mrenclave, ~sk_user, pk_user, ~mcid,  initMC)]->
+
+[ Out(senc{~mcid, ~sk_user, pk_user}seal_key),
+  !Signup_Mem_23(sk_ISV, pk_ISV, ~platform_sec, ~mrenclave, ~sk_user, pk_user,  ~mcid,  initMC)]
+
+
+
+
+// Instantiate multiple enclave processes (each with different p_id)
+// Each instance of this rule = one sawtooth process 
+//   
+// Association Tree L3 -- process 
+rule Signup_L3 [color=#F7E6C5]:
+[Fr(~p_id),
+!Signup_Mem_23(sk_ISV, pk_ISV, platform_sec, mrenclave, sk_user, pk_user,  mcid,  initMC)]
+
+--[ Signup_L3(sk_ISV, pk_ISV, platform_sec, mrenclave, ~p_id, sk_user, pk_user,  mcid,  initMC),
+    Process(platform_sec, ~p_id)]-> // using this to enforce one process per node in honest run lemma
+
+[ Start_process_cwt(pk_ISV, platform_sec, mrenclave, ~p_id),  // to enforce one CWT per process
+  Start_process_cwc(pk_ISV, platform_sec, mrenclave, ~p_id),  // to enforce multiple CWC per process
+  Out(pk_user)]
+
+// from here on multiple processes starts
+
+
+//--------------------------Election phase Ecall CreateWaitTimer (CWT)
+
+// Start of CWT ecall 
+// Receive sign-up information and MC pointers from Sign-up phase
+// Request MC to create reference MC value   
+rule E_CreateWaitTimer_1 [color=#E5E8E8]:
+let seal_key = h(<platform_sec, mrenclave, 'seal'>) 
+in
+[ 
+  Start_process_cwt(pk_ISV, platform_sec, mrenclave, ~p_id), // using binder to enclave
+  In(senc{mcid, sk_user, pk_user}seal_key),  // ecall input
+  Fr(~mc_session)
+ ]
+--[E_CreateWaitTimer_1(pk_ISV, platform_sec, mrenclave, ~p_id, sk_user, pk_user, mcid),
+CWT_start(platform_sec)]->
+
+[ Sgx_increment_MC(<platform_sec, pk_ISV>, mcid, ~mc_session),
+  Priv_mem_E_CWT(pk_ISV, platform_sec, ~p_id, sk_user, pk_user, seal_key, mcid, ~mc_session)]
+
+                                     // MC increment operation   
+                                     rule PSE_sgx_increment_MC [color=#DBF6FA]:
+                                        let valMC_new = valMC + '1'
+                                        in  
+                                        [ Sgx_increment_MC(MC_owner_policy, mcid, label), 
+                                          !Priv_mem_ME(MC_owner_policy, mcid, ptr_old, valMC ), 
+                                          Fr(~ptr_new)]
+                                        
+                                        --[Free(mcid, ptr_old, ~ptr_new, valMC, valMC_new),
+                                           PSE_sgx_increment_MC(MC_owner_policy, mcid, ptr_old, ~ptr_new, valMC_new) ]->
+                                        
+                                        [Sgx_increment_MC_done(MC_owner_policy, mcid, label, valMC_new),
+                                          !Priv_mem_ME(MC_owner_policy, mcid, ~ptr_new, valMC_new)]
+
+// Receive reference MC value and prepare seal data for CWC ecall  
+rule E_CreateWaitTimer_2 [color=#E5E8E8]:
+[ Sgx_increment_MC_done(<platform_sec, pk_ISV>, mcid, ~mc_session, valMC_ref), // reference_MC
+  Priv_mem_E_CWT(pk_ISV, platform_sec, ~p_id, sk_user, pk_user, seal_key, mcid, ~mc_session) ]
+
+--[E_CreateWaitTimer_2(pk_ISV, platform_sec, ~p_id, sk_user, pk_user, mcid, valMC_ref),
+  CWT_end(platform_sec)   ]->
+
+[Out(< valMC_ref, sign{valMC_ref}sk_user, senc{mcid, sk_user, pk_user}seal_key>)]
+
+
+//--------------------------Election phase Ecall 2 -- CreateWaitCertificate (CWC)
+
+// Start CWC ecall 
+// Verify signed reference MC value and read current MC value 
+rule E_CreateWaitCertificate_1 [color=#C8D6B9]:
+let seal_key = h(<platform_sec, mrenclave, 'seal'>) 
+in
+[ 
+  Start_process_cwc(pk_ISV, platform_sec, mrenclave, p_id), // using binder to process
+  In(< valMC_ref, valMC_ref_signed, senc{mcid, sk_user, pk_user}seal_key>),
+  Fr(~mc_session)]
+
+--[E_CreateWaitCertificate_1(pk_ISV, platform_sec, mrenclave, p_id, sk_user, pk_user, mcid, valMC_ref),
+    Eql(verify(valMC_ref_signed, valMC_ref, pk_user), true()),
+    CWC_start(platform_sec)]->
+
+[ Sgx_read_MC(<platform_sec, pk_ISV>, mcid, ~mc_session),
+  EPC_CWC_12(pk_ISV, platform_sec, mrenclave, p_id, sk_user, pk_user, mcid, ~mc_session, valMC_ref)] 
+  // CWC = CreateWaitCertificate
+
+                                        // MC Read Operation  
+                                        // only allow MC_owner_policy in Priv_mem_ME which matches request MC_owner_policy from MC create/Read rules
+                                        rule PSE_sgx_read_MC [color=#DBF6FA]:                   
+                                        [Sgx_read_MC(MC_owner_policy, mcid, label), 
+                                         !Priv_mem_ME(MC_owner_policy, mcid, ptr, valMC)]
+                                        
+                                        --[ Read(mcid, ptr, valMC),
+                                           PSE_sgx_read_MC(MC_owner_policy, mcid, ptr, valMC) ]->
+
+                                        [Sgx_read_MC_done(MC_owner_policy, mcid, label, valMC)]
+
+
+
+
+// Compare reference MC and generate certificate
+rule E_CreateWaitCertificate_2 [color=#C8D6B9]:
+[ EPC_CWC_12(pk_ISV, platform_sec, mrenclave, p_id, sk_user, pk_user, mcid, ~mc_session, valMC_ref), // CWC = CreateWaitCertificate
+  Sgx_read_MC_done(<platform_sec, pk_ISV>, mcid, ~mc_session, valMC_rcvd),
+  Fr(~mc_session_2)]
+
+--[E_CreateWaitCertificate_2(pk_ISV, platform_sec, mrenclave, p_id, sk_user, pk_user, mcid, valMC_rcvd),
+Eql(valMC_rcvd, valMC_ref),
+PoETCertificate(platform_sec, valMC_ref)
+
+]->
+
+[ Sgx_increment_MC(<platform_sec, pk_ISV>, mcid, ~mc_session_2),
+Priv_mem_AE_CWC_23(pk_ISV, platform_sec, mrenclave, p_id, sk_user, pk_user, mcid, ~mc_session_2, valMC_ref)
+ ]  
+
+// Increment MC to apparently prevent further certification generation 
+rule E_CreateWaitCertificate_3 [color=#C8D6B9]:
+[ Priv_mem_AE_CWC_23(pk_ISV, platform_sec, mrenclave, p_id, sk_user, pk_user, mcid, ~mc_session_2, valMC_ref), // CWC = CreateWaitCertificate
+ Sgx_increment_MC_done(<platform_sec, pk_ISV>, mcid, ~mc_session_2, valMC) 
+ ]
+
+--[E_CreateWaitCertificate_3(pk_ISV, platform_sec, mrenclave, p_id, sk_user, pk_user, mcid, valMC)]->
+
+[ Start_process_cwc(pk_ISV, platform_sec, mrenclave, p_id) // to allow multiple sequential run, but not threaded run
+]
+
+
+// helper lemmas  
+
+// All owner specific MC increment operations corresponds to an owner specific MC creation instance  
+lemma createMC_for_every_incMC_ind [use_induction, reuse]:
+"
+All MC_owner_policy mcid ptr_old ptr_new valMC #i.
+PSE_sgx_increment_MC(MC_owner_policy, mcid, ptr_old, ptr_new, valMC ) @i 
+==> 
+(Ex ptr #j. PSE_CreateMC(MC_owner_policy, mcid, ptr, '1') @j
+& #j < #i )
+
+"
+
+
+// Each MC increment operation increases the MC value monotonically   
+lemma MC_value_never_equals_ind [use_induction, reuse]:
+"
+All MC_owner_policy mcid ptr_old1 ptr_new1 ptr_old2 ptr_new2 valMC #i #j.
+PSE_sgx_increment_MC(MC_owner_policy, mcid, ptr_old1, ptr_new1, valMC ) @i 
+& PSE_sgx_increment_MC(MC_owner_policy, mcid, ptr_old2, ptr_new2, valMC) @j
+==> 
+#i = #j
+"
+
+
+// Honest run of the complete run of Sawtooth flow
+// Helps in verifying correct syntax and intended protocol run behavior  
+
+lemma honest_run_plain:
+exists-trace
+"
+Ex
+
+sk_ISV
+pk_ISV
+#isv_L1
+platform
+sk_user
+mrenclave
+#csd1
+mcid
+initMC  
+ptr1
+MC_owner_policy
+#cmc1
+#csd2
+p_id 
+pk_user
+#csd3
+
+
+#cwt1
+ptr2
+valMC_ref
+#imc1
+#cwt2
+
+#cwc1
+#rmc1 
+#cwc2
+ptr3
+valMC_inc
+#imc2
+#cwc3
+.
+
+ISV_L1(sk_ISV, pk_ISV) @isv_L1
+& Signup_L2a(sk_ISV, pk_ISV, platform, sk_user, mrenclave) @csd1 
+& (initMC = '1')
+& MC_owner_policy = <platform, pk_ISV>
+& PSE_CreateMC(MC_owner_policy, mcid, ptr1, initMC) @cmc1 
+& Signup_L2b(sk_ISV, pk_ISV, platform, mrenclave, sk_user, pk_user, mcid, initMC) @csd2 
+& Signup_L3(sk_ISV, pk_ISV, platform, mrenclave, p_id, sk_user, pk_user, mcid, initMC) @csd3
+
+
+
+& E_CreateWaitTimer_1(pk_ISV, platform, mrenclave, p_id, sk_user, pk_user, mcid) @cwt1 
+& (valMC_ref = '1' + initMC ) 
+& not(ptr1 = ptr2)
+& PSE_sgx_increment_MC(MC_owner_policy, mcid, ptr1, ptr2, valMC_ref) @imc1
+& E_CreateWaitTimer_2(pk_ISV, platform, p_id, sk_user, pk_user, mcid, valMC_ref) @cwt2 
+
+
+
+& E_CreateWaitCertificate_1(pk_ISV, platform, mrenclave, p_id, sk_user, pk_user, mcid, valMC_ref) @cwc1   
+& PSE_sgx_read_MC(MC_owner_policy, mcid, ptr2, valMC_ref) @rmc1
+& E_CreateWaitCertificate_2(pk_ISV, platform, mrenclave, p_id, sk_user, pk_user, mcid, valMC_ref) @cwc2 
+
+& (valMC_inc =  '1'+ '1' +initMC )
+& not(ptr2 = ptr3)
+& PSE_sgx_increment_MC(MC_owner_policy, mcid, ptr2,  ptr3, valMC_inc) @imc2
+& E_CreateWaitCertificate_3(pk_ISV, platform, mrenclave, p_id, sk_user, pk_user, mcid, valMC_inc) @cwc3
+
+
+
+// enforce one node for optimization 
+& (All node_i node_j #i #j. 
+  Node(node_i) @i 
+& Node(node_j) @j
+==> #i = #j
+)
+
+
+// enforce one application instance only for optimization
+& (All platform_x p_id_i p_id_j #i #j. 
+   Process(platform_x, p_id_i) @i
+& Process(platform_x, p_id_j) @j
+==> #i = #j
+)
+
+
+"
+
+
+// Sanity check -- ensure multiple certificate can be generated for each node instance 
+lemma cert_for_each_node_sanity_plain:
+exists-trace
+"Ex platform1 platform2 platform3 valMC_ref #t1 #t2 #t3. 
+
+         PoETCertificate(platform1, valMC_ref) @t1
+    &     PoETCertificate(platform2, valMC_ref) @t2
+    &     PoETCertificate(platform3, valMC_ref) @t3
+          
+          & not (platform1 = platform2)
+          & not (platform2 = platform3)
+
+"
+
+//----------------------------------------------------------------- Target Property
+
+// only one certificate with unique reference MC value can be generated per node per election round.
+
+
+/* tamarin-prover --heuristic=s --stop-on-trace=DFS saw.spthy --prove=createMC_for_every_incMC_ind --prove=MC_value_never_equals_ind --prove=unique_cert_per_node_same_valMC_ref_plain 
+  
+==============================================================================
+summary of summaries:
+
+analyzed: saw.spthy
+
+  createMC_for_every_incMC_ind (all-traces): verified (19 steps)
+  MC_value_never_equals_ind (all-traces): verified (894 steps)
+  honest_run_plain (exists-trace): analysis incomplete (1 steps)
+  cert_for_each_node_sanity_plain (exists-trace): analysis incomplete (1 steps)
+  unique_cert_per_node_same_valMC_ref_plain (all-traces): falsified - found trace (13 steps)
+
+
+==============================================================================
+~ 1m 18s
+
+
+*/
+
+
+
+lemma unique_cert_per_node_same_valMC_ref_plain:
+
+"All platform valMC_ref #t1 #t2. 
+
+         PoETCertificate(platform, valMC_ref) @t1
+    &     PoETCertificate(platform, valMC_ref) @t2
+     
+  ==> #t1 =#t2
+"
+
+
+
+
+end

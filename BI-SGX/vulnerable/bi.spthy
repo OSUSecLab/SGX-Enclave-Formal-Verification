@@ -1,0 +1,639 @@
+theory bi
+begin
+
+
+/*
+ About: BI-SGX : Bioinformatic Interpreter on SGX-based Secure Computing Cloud
+ Code: https://github.com/hello31337/BI-SGX     
+ status -- Complete
+ Run command:
+  tamarin-prover bi.spthy --prove
+
+==============================================================================
+summary of summaries:
+
+analyzed: $HOME/Documents/sgx_formal_verification/code/tamarin/gitrepo/bisgx/v_13_try_genericIndex/vul/bi.spthy
+
+  AUTO_typing_src (all-traces): verified (354 steps)
+  honest_run_req11 (exists-trace): verified (26 steps)
+  honest_run_req111 (exists-trace): verified (27 steps)
+  honest_run_2_upload (exists-trace): verified (37 steps)
+  unique_ra_session_at_ecall (all-traces): verified (12 steps)
+  unique_ra_session_at_request (all-traces): verified (12 steps)
+  unique_ra_session_n_index_req_resp_map (all-traces): verified (8 steps)
+  unique_ra_session_n_index_req_resp_inj_map_plain (all-traces): verified (22 steps)
+  sealing_replay_plain (all-traces): falsified - found trace (32 steps)
+
+==============================================================================
+[Finished in 26.4s]
+
+*/
+
+
+// multiset allows +1 operation on counter values
+builtins: multiset, hashing, symmetric-encryption
+
+
+// Using pointers to maintain efficient memories was original suggested by Benjamin Kiesl --- https://groups.google.com/g/tamarin-prover/c/XAf-mO86d2Y/m/-3ri-zEaAwAJ
+// We modified the suggestion for our case
+
+// Restriction over Monotonic Counter (MC) and database index variable operations for consistent operations
+// for each owner specific MC instance. 
+
+// Each value (pointer) should be updated only once 
+restriction MemoryCanBeFreedOnlyOnce:
+    "All owner pointer pointer_new1 val_old1 val_new1 pointer_new2 val_old2 val_new2  #i #j. 
+    Free(owner, pointer, pointer_new1, val_old1, val_new1) @ i 
+  & Free(owner, pointer, pointer_new2, val_old2, val_new2) @ j ==> #i = #j"
+
+
+// ------------------------------------------ DO   
+// DO -- Data Owner
+
+// Setup Data-owner IDs
+
+rule DO_setup [color=#145A32] :
+   [ Fr( ~oname ) ] --[ DO_Setup( ~oname ) ]-> [ !OMem( ~oname ) ]
+
+
+// Prepare data upload request and share secure Remote Attestation key (~ra_o_key) before each upload
+
+rule DO_upload [color=#C8D6B9]:
+let cipher_upload = senc{'upload', oname, ~data}~ra_o_key
+    gcm_tag_upload = senc{h(cipher_upload)}~ra_o_key 
+in 
+   [ Fr( ~data ), Fr( ~ra_o_key ), !OMem( oname ) ]
+  --[
+  AUTO_OUT_0_1_DO_upload( cipher_upload ),
+  DO_upload( ~ra_o_key, ~data, oname, cipher_upload, gcm_tag_upload )
+  ]->
+   [
+   Out(<cipher_upload, gcm_tag_upload>), 
+   RA_o_login( ~ra_o_key )
+   ]
+
+
+// -------------------------------------------- SGX Enclave Setup
+
+// Associate Tree L1 -- platform
+rule L1_platform [color=#566573]:    
+   [Fr(~platform_sec)]
+  --[ L1_platform(~platform_sec)  ]->
+   [
+    !L12(~platform_sec)
+ ]
+
+
+// Associate Tree L2 -- MRSIGNER, MRENCLAVE
+rule L2_mrsigner_mrenclave [color=#566573]:
+
+   [Fr(~mrsigner), Fr(~mrenclave), !L12(platform_sec)]
+  --[ L2_mrsigner_mrenclave(platform_sec, ~mrsigner, ~mrenclave) ]->
+   [
+    !L23(platform_sec, ~mrsigner, ~mrenclave),
+    Out(~mrsigner)
+    ]
+
+
+// Associate Tree L3 -- Process
+rule L3_process [color=#566573]:
+   [!L23(platform_sec, mrsigner, mrenclave),
+   Fr(~p_id)]
+
+  --[ L3_process(platform_sec, mrsigner, mrenclave, ~p_id) ]->
+   [ 
+     Start_thread_e_upload(platform_sec, mrsigner, mrenclave, ~p_id),
+     Start_thread_db_upload(~p_id),
+     Start_thread_e_data_req(platform_sec, mrsigner, mrenclave, ~p_id),
+     Start_thread_db_data_req(~p_id)
+   ]
+
+
+   
+// -------------------------------------------- SGX ecall 1 Data Owner Requests 
+
+// Start Ecall to process Data-Owner upload request
+// Decrypt the request and request MC value for indexing
+// Multiple threads are disabled, because enclave config says TCS = 1
+
+rule E_o_decrypt_upload [color=#E5E8E8]:
+  let e_arg_cipher =  senc{'upload', oname_rcvd, data_rcvd}~ra_o_key
+      e_arg_gcm_tag = senc{h(e_arg_cipher)}~ra_o_key // verification of tag by pattern matching
+      seal_key = h(<platform_sec, mrsigner, 'seal'>)  // default seal key policy is MRSIGNER == combination of ISV and platform secret  
+      sealed_e_return = senc{oname_rcvd, data_rcvd}seal_key
+   in
+   [  In( <e_arg_cipher, e_arg_gcm_tag> ), 
+     Start_thread_e_upload(platform_sec, mrsigner, mrenclave, ~p_id),
+     RA_o_login( ~ra_o_key )
+     ]
+  --[
+  E_o_decrypt_upload(platform_sec, mrsigner, mrenclave, ~p_id, ~ra_o_key, data_rcvd, oname_rcvd, e_arg_cipher, e_arg_gcm_tag, sealed_e_return),
+    AUTO_IN_2_1_E_o_decrypt( e_arg_cipher,  data_rcvd ),
+  AUTO_IN_1_1_E_o_decrypt( e_arg_cipher, oname_rcvd),
+  AUTO_OUT_0_1_E_o_upload( sealed_e_return)
+  ]->
+   [
+   Out( <'db_store', sealed_e_return> )]
+
+// -------------------------------------------- Database store
+                                                  
+                                                  // The database is created in application code
+                                                  // There no binding to the any enclave code 
+                                                  // an adversary can create multiple databases if needed
+
+                                                  // Crate database indexes 
+                                                  rule DB_setup [color=#DF9881]:
+                                                     let index_init = '1'
+                                                     in 
+                                                     [ Fr(~ptr) ] --[ DB_setup( ~ptr, index_init ) ]-> [ !DB_index( ~ptr, index_init ) ]
+
+
+                                                  // Store sealed data with the unique indexes 
+                                                  rule DB_store [color=#F7E6C5]:
+                                                    let index_new = i + '1'
+                                                    in
+                                                     [ Fr( ~ptr_new ), 
+                                                       Start_thread_db_upload(~p_id),
+                                                       !DB_index( ptr, i ), In( <'db_store', sealed_cipher> )
+                                                     ]
+                                                    --[ Free(~p_id, ptr, ~ptr_new, i, index_new),
+                                                       DB_store(~p_id, ptr, i, ~ptr_new, index_new, sealed_cipher ),
+                                                       Stored_sealing(index_new, sealed_cipher) ]->
+                                                    
+                                                     [ 
+
+                                                     !DB_mem( index_new , sealed_cipher ), 
+                                                     !DB_index( ~ptr_new, index_new ) ]
+
+
+
+// -------------------------------------------- Researcher 
+// RCHR -- Researcher 
+
+// Allow arbitrary indexes for RCHR's requests 
+rule Start [color=#ECEC57]:
+    [ Fr(~na) ]
+  --[  Start()]->
+    [ !Indexes('1'+'1')]
+
+
+rule Loop [color=#ECEC57]:
+    [ !Indexes(x) ]
+  --[ Loop() ]->
+    [ !Indexes(x+ '1')]
+
+
+// Prepare data retrieval request and send to BI-SGX   
+// Assume secure RA session with BI-SGX enclave with RA session key (ra_r_key)
+rule RCHR_data_req [color=#D2B4DE]:
+let cipher_req_data = senc{'RCHR_data_req', index_req}~ra_r_key
+    gcm_tag_req_data = senc{h(cipher_req_data)}~ra_r_key
+    in
+
+   [!Indexes(index_req), Fr( ~ra_r_key ) ]
+  --[
+  
+  RCHR_data_req( ~ra_r_key, index_req, cipher_req_data, gcm_tag_req_data ),
+  RCHR_data_req( ~ra_r_key, index_req, cipher_req_data, gcm_tag_req_data ),
+    AUTO_OUT_0_1_RCHR_data_req( cipher_req_data)
+  ]->
+   [
+   Out( <cipher_req_data, gcm_tag_req_data> ), RA_r_login( ~ra_r_key ), Mem_RCHR( ~ra_r_key, index_req )
+   ]
+
+
+
+                      // -------------------------------------------- SGX ecall 2 Researchers Requests 
+                      
+                      // second ecall for response to researcher query
+                       
+                    // Start ecall to process researcher query
+                    // Decrypt the request and issue ocall for to retrieve the data from database
+                    // Assume secure RA session with researcher using RA session key (ra_r_key) 
+
+                      rule E_r_data_req [color=#B2BABB]:
+                          let  e_arg_cipher =  senc{'RCHR_data_req', index_req}~ra_r_key
+                               e_arg_gcm_tag = senc{h(e_arg_cipher)}~ra_r_key
+                          in
+                         [
+                         In( <e_arg_cipher, e_arg_gcm_tag> ), 
+                         RA_r_login( ~ra_r_key ), 
+                         Start_thread_e_data_req(platform_sec, mrsigner, mrenclave, ~p_id)
+                         ]
+                        --[
+                           E_r_data_req(platform_sec, mrsigner, mrenclave, ~p_id, ~ra_r_key, index_req, e_arg_cipher, e_arg_gcm_tag),
+                             AUTO_IN_3_1_E_r_data_req( e_arg_cipher, index_req)
+                        ]->
+                         [
+                         Out( <'db_retrieve_req', index_req> ), EPC_E_r(platform_sec, mrsigner, mrenclave, ~p_id, ~ra_r_key, index_req )
+                         ]
+
+
+                                              // Receive the dataset index from OCALL and return sealed data  
+                                              rule DB_retrieve [color=#F7E6C5] :
+
+                                                 [ In( <'db_retrieve', index_req> ), 
+                                                 !DB_mem( index_req, sealed_cipher), 
+                                                 Start_thread_db_data_req(~p_id) ] // implicit pattern match of index_req
+                                              
+                                                --[ DB_retrieve(~p_id, index_req, sealed_cipher ) ]->
+                                              
+                                                 [ Out( <'db_retrieve_resp', sealed_cipher> ) ]
+
+                      // unpack the sealed data and return to researcher
+
+                      rule E_r_data_resp [color=#B2BABB]:
+                        let seal_key = h(<platform_sec, mrsigner, 'seal'>)  // default seal key policy is MRSIGNER == combination of ISV and platform secret  
+                            sealed_cipher_rcvd = senc{oname_sealed, data_sealed}seal_key
+                            cipher_data_resp  = senc{ 'RCHR_data_resp', data_sealed}~ra_r_key
+                            gcm_tag_data_resp = senc{h(cipher_data_resp)}~ra_r_key
+                         in 
+                         [
+                        
+                             In( <'db_retrieve_resp', sealed_cipher_rcvd>
+                         ), EPC_E_r(platform_sec, mrsigner, mrenclave, ~p_id, ~ra_r_key, index_req )
+                         ]
+                        --[
+                         E_r_data_resp(platform_sec, mrsigner, mrenclave, ~p_id, ~ra_r_key, index_req, data_sealed, sealed_cipher_rcvd, cipher_data_resp, gcm_tag_data_resp),
+                           E_r_data_reply(~ra_r_key, index_req),
+                         E_r_data_reply_ex(~ra_r_key, index_req, sealed_cipher_rcvd),
+                           AUTO_IN_5_1_E_r_data_resp(sealed_cipher_rcvd, data_sealed  )
+                        ]->
+                         [ Out( <'RCHR_data_resp', cipher_data_resp, gcm_tag_data_resp> ) ]
+
+
+// -------------------------------------------- Researcher Response
+
+// Receive the data from BI-SGX   
+
+rule RCHR_data_resp [color=#D2B4DE]:
+   let 
+   cipher_data_resp = senc{'RCHR_data_resp', data_rcvd}~ra_r_key
+   gcm_tag_resp = senc{h(cipher_data_resp)}~ra_r_key
+   in
+   [
+   Mem_RCHR( ~ra_r_key, index_req ), 
+   In( <'RCHR_data_resp', cipher_data_resp, gcm_tag_resp> )
+   ]
+  --[ RCHR_data_resp( ~ra_r_key, index_req, data_rcvd, cipher_data_resp, gcm_tag_resp),
+      RCHR_data_rcv(~ra_r_key, index_req)
+      ]->
+   [ ]
+
+
+
+// Source lemma to resolve partial deconstructions 
+// This lemma was generated by Tamarin's auto-source feature https://hal.archives-ouvertes.fr/hal-02903620/document
+
+lemma AUTO_typing_src [sources]:
+  "((((⊤) ∧
+           (∀ x m #i.
+             (AUTO_IN_1_1_E_o_decrypt( m, x ) @ #i) ⇒
+             ((∃ #j. (!KU( x ) @ #j) ∧ (#j < #i)) ∨
+              (∃ #j. (AUTO_OUT_0_1_DO_upload( m ) @ #j) ∧ (#j < #i))))) ∧
+          (∀ x m #i.
+            (AUTO_IN_2_1_E_o_decrypt( m, x ) @ #i) ⇒
+            ((∃ #j. (!KU( x ) @ #j) ∧ (#j < #i)) ∨
+             (∃ #j. (AUTO_OUT_0_1_DO_upload( m ) @ #j) ∧ (#j < #i))))) ∧
+         (∀ x m #i.
+           (AUTO_IN_3_1_E_r_data_req( m, x ) @ #i) ⇒
+           (((∃ #j. (!KU( x ) @ #j) ∧ (#j < #i)) ∨
+             (∃ #j.
+               (AUTO_OUT_0_1_RCHR_data_req( m ) @ #j) ∧ (#j < #i)))))
+         ) ∧
+        (∀ x m #i.
+          (AUTO_IN_5_1_E_r_data_resp( m, x ) @ #i) ⇒
+          ((∃ #j. (!KU( x ) @ #j) ∧ (#j < #i)) ∨
+           (∃ #j. (AUTO_OUT_0_1_E_o_upload( m ) @ #j) ∧ (#j < #i))))"
+
+
+
+
+// Honest run of the complete run of BI-SGX flow
+// Helps in verifying correct syntax and intended protocol run behavior
+
+// index chosen for researcher's query is '1' + '1'
+
+lemma honest_run_req11:
+exists-trace
+    "
+    Ex
+
+    oname
+    #do_setup
+
+    ra_o_key
+    data
+    cipher_upload_req
+    gcm_tag_upload_req
+    #do_upload
+
+    platform
+    #L1_platform
+    mrenclave
+    mrsigner
+    #L2_mrsigner_mrenclave
+    p_id 
+    #L3_process
+
+    sealed_e_return
+    #E_o_decrypt_upload
+
+    index_init
+    ptrIndex1
+    #db_setup
+    ptrIndex2
+    #db_store
+
+
+    ra_r_key
+    index_req
+    cipher_data_req
+    gcm_tag_data_req
+    #rchr_data_req_11
+    #E_r_data_req
+    #db_retrieve
+    cipher_data_resp
+    gcm_tag_data_resp
+    #E_r_data_resp
+    #rchr_data_resp
+    .
+
+      DO_Setup(oname) @do_setup
+    & DO_upload(ra_o_key, data, oname, cipher_upload_req, gcm_tag_upload_req) @do_upload
+
+    & L1_platform(platform) @L1_platform
+    & L2_mrsigner_mrenclave(platform, mrsigner, mrenclave) @L2_mrsigner_mrenclave
+    & L3_process(platform, mrsigner, mrenclave, p_id) @L3_process
+    & E_o_decrypt_upload(platform, mrsigner, mrenclave, p_id, ra_o_key, data, oname, cipher_upload_req, gcm_tag_upload_req, sealed_e_return) @E_o_decrypt_upload
+
+    & DB_setup(ptrIndex1, index_init) @db_setup
+    & index_init = '1'
+    & DB_store(p_id, ptrIndex1, index_init, ptrIndex2, index_init + '1', sealed_e_return) @db_store
+
+    & RCHR_data_req(ra_r_key, index_req, cipher_data_req, gcm_tag_data_req) @rchr_data_req_11
+    & E_r_data_req(platform, mrsigner, mrenclave, p_id, ra_r_key, index_req, cipher_data_req, gcm_tag_data_req) @E_r_data_req
+    & DB_retrieve(p_id, index_req, sealed_e_return) @db_retrieve
+    & E_r_data_resp(platform, mrsigner, mrenclave, p_id, ra_r_key, index_req, data, sealed_e_return, cipher_data_resp, gcm_tag_data_resp) @E_r_data_resp
+    & RCHR_data_resp(ra_r_key, index_req, data, cipher_data_resp, gcm_tag_data_resp) @rchr_data_resp
+        
+    "
+
+// index chosen for researcher's query is '1' + '1' + '1'
+
+lemma honest_run_req111:
+exists-trace
+    "
+    Ex
+
+    oname
+    #do_setup
+
+    ra_o_key
+    data
+    cipher_upload_req
+    gcm_tag_upload_req
+    #do_upload
+
+    platform
+    #L1_platform
+    mrenclave
+    mrsigner
+    #L2_mrsigner_mrenclave
+    p_id 
+    #L3_process
+
+    
+    sealed_e_return
+    #E_o_decrypt_upload
+
+    index_init
+    ptrIndex1
+    ptrIndex2
+    #db_setup
+    ptrIndex3
+    #db_store
+
+
+    ra_r_key
+    index_req
+    cipher_data_req
+    gcm_tag_data_req
+    #rchr_data_req_11
+    #E_r_data_req
+    #db_retrieve
+    cipher_data_resp
+    gcm_tag_data_resp
+    #E_r_data_resp
+    #rchr_data_resp
+    .
+
+      DO_Setup(oname) @do_setup
+    & DO_upload(ra_o_key, data, oname, cipher_upload_req, gcm_tag_upload_req) @do_upload
+
+    & L1_platform(platform) @L1_platform
+    & L2_mrsigner_mrenclave(platform, mrsigner, mrenclave) @L2_mrsigner_mrenclave
+    & L3_process(platform, mrsigner, mrenclave, p_id) @L3_process
+    & E_o_decrypt_upload(platform, mrsigner, mrenclave, p_id, ra_o_key, data, oname, cipher_upload_req, gcm_tag_upload_req, sealed_e_return) @E_o_decrypt_upload
+
+
+    & DB_setup(ptrIndex1, index_init) @db_setup
+    & index_init = '1'
+    & DB_store(p_id, ptrIndex2, index_init + '1', ptrIndex3, index_init + '1' + '1', sealed_e_return) @db_store
+
+    & RCHR_data_req(ra_r_key, index_req, cipher_data_req, gcm_tag_data_req) @rchr_data_req_11
+    & E_r_data_req(platform, mrsigner, mrenclave, p_id, ra_r_key, index_req, cipher_data_req, gcm_tag_data_req) @E_r_data_req
+    & DB_retrieve(p_id, index_req, sealed_e_return) @db_retrieve
+    & E_r_data_resp(platform, mrsigner, mrenclave, p_id, ra_r_key, index_req, data, sealed_e_return, cipher_data_resp, gcm_tag_data_resp) @E_r_data_resp
+    & RCHR_data_resp(ra_r_key, index_req, data, cipher_data_resp, gcm_tag_data_resp) @rchr_data_resp
+        
+    "
+
+// Sanity check for upload two different data uploaded by the Data-Owner 
+
+lemma honest_run_2_upload:
+exists-trace
+    "
+    Ex
+
+    oname
+    #do_setup
+
+    ra_o_key1
+    data1
+    cipher_upload_req1
+    gcm_tag_upload_req1
+    sealed_e_return1
+    #do_upload1
+
+    ra_o_key2
+    data2
+    cipher_upload_req2
+    gcm_tag_upload_req2
+    sealed_e_return2
+    #do_upload2
+
+    platform
+    #L1_platform
+    mrenclave
+    mrsigner
+    #L2_mrsigner_mrenclave
+    p_id1
+    p_id2 
+    #L3_process1
+    #L3_process2
+
+    #E_o_decrypt_upload1
+    #E_o_decrypt_upload2
+
+    index_init
+    ptrIndex1
+    ptrIndex2
+    #db_setup
+    ptrIndex3
+    #db_store1
+    #db_store2
+
+    ra_r_key
+    index_req
+    cipher_data_req
+    gcm_tag_data_req
+    #rchr_data_req_111
+    #E_r_data_req
+    #db_retrieve
+    cipher_data_resp
+    gcm_tag_data_resp
+    #E_r_data_resp
+    #rchr_data_resp
+    .
+
+      DO_Setup(oname) @do_setup
+    & DO_upload(ra_o_key1, data1, oname, cipher_upload_req1, gcm_tag_upload_req1) @do_upload1
+    & DO_upload(ra_o_key2, data2, oname, cipher_upload_req2, gcm_tag_upload_req2) @do_upload2
+
+
+    & L1_platform(platform) @L1_platform
+    & L2_mrsigner_mrenclave(platform, mrsigner, mrenclave) @L2_mrsigner_mrenclave
+    & L3_process(platform, mrsigner, mrenclave, p_id1) @L3_process1
+    & L3_process(platform, mrsigner, mrenclave, p_id2) @L3_process2
+
+    & E_o_decrypt_upload(platform, mrsigner, mrenclave, p_id1,ra_o_key1, data1, oname, cipher_upload_req1, gcm_tag_upload_req1, sealed_e_return1) @E_o_decrypt_upload1
+    & E_o_decrypt_upload(platform, mrsigner, mrenclave, p_id2,ra_o_key2, data2, oname, cipher_upload_req2, gcm_tag_upload_req2, sealed_e_return2) @E_o_decrypt_upload2
+
+
+    & DB_setup(ptrIndex1, index_init) @db_setup
+    & index_init = '1'
+    & DB_store(p_id1, ptrIndex1, index_init , ptrIndex2, index_init + '1', sealed_e_return1) @db_store1
+    & DB_store(p_id2, ptrIndex2, index_init + '1', ptrIndex3, index_init + '1' + '1', sealed_e_return2) @db_store2
+
+    
+
+    & RCHR_data_req(ra_r_key, index_req, cipher_data_req, gcm_tag_data_req) @rchr_data_req_111
+    & E_r_data_req(platform, mrsigner, mrenclave, p_id1, ra_r_key, index_req, cipher_data_req, gcm_tag_data_req) @E_r_data_req
+
+    & DB_retrieve(p_id1, index_req, sealed_e_return2) @db_retrieve
+    
+    & E_r_data_resp(platform, mrsigner, mrenclave, p_id1, ra_r_key, index_req, data2, sealed_e_return2, cipher_data_resp, gcm_tag_data_resp) @E_r_data_resp
+
+    & RCHR_data_resp(ra_r_key, index_req, data2, cipher_data_resp, gcm_tag_data_resp) @rchr_data_resp
+        
+    "
+
+
+// helper lemma -- all responses from ecall correspond to different RA sessions
+lemma unique_ra_session_at_ecall [reuse]:
+"
+All ra_r_key_x index_req_x1 sealed_e_return_x1 #E_r_data_reply_ex_x1
+    index_req_x2 sealed_e_return_x2 #E_r_data_reply_ex_x2.
+
+ E_r_data_reply_ex(ra_r_key_x, index_req_x1, sealed_e_return_x1) @E_r_data_reply_ex_x1
+ & E_r_data_reply_ex(ra_r_key_x, index_req_x2, sealed_e_return_x2) @E_r_data_reply_ex_x2
+
+==> 
+#E_r_data_reply_ex_x1 = #E_r_data_reply_ex_x2
+
+"
+
+// helper lemma -- all responses received by researchers correspond to different RA sessions
+lemma unique_ra_session_at_request [reuse]:
+"
+All ra_r_key index_req1 #RCHR_data_rcv1
+             index_req2 #RCHR_data_rcv2.
+
+RCHR_data_rcv(ra_r_key, index_req1) @RCHR_data_rcv1
+& RCHR_data_rcv(ra_r_key, index_req2) @RCHR_data_rcv2
+==> 
+ #RCHR_data_rcv1  = #RCHR_data_rcv2 
+ "
+
+// helper lemma -- Ensure non-injective mapping between ecall response and researcher's receiving the data  
+lemma unique_ra_session_n_index_req_resp_map [reuse]:
+"
+All ra_r_key index_req #RCHR_data_rcv.
+RCHR_data_rcv(ra_r_key, index_req) @RCHR_data_rcv
+
+==> 
+Ex ra_r_key_x index_req_x sealed_e_return_x #E_r_data_reply_ex_x.
+ E_r_data_reply_ex(ra_r_key_x, index_req_x, sealed_e_return_x) @E_r_data_reply_ex_x
+ & ra_r_key_x = ra_r_key
+ // & index_req_x = index_req
+"
+
+// Ensure injective mapping between ecall response and researcher's receiving the data
+lemma unique_ra_session_n_index_req_resp_inj_map_plain  :
+"
+All ra_r_key index_req #RCHR_data_rcv.
+RCHR_data_rcv(ra_r_key, index_req) @RCHR_data_rcv
+
+==> 
+Ex ra_r_key_x index_req_x sealed_e_return_x #E_r_data_reply_ex_x.
+
+ E_r_data_reply_ex(ra_r_key_x, index_req_x, sealed_e_return_x) @E_r_data_reply_ex_x
+ & ra_r_key_x = ra_r_key
+ & index_req_x = index_req
+
+ & (All ra_r_key_y index_req_y sealed_e_return_y #E_r_data_reply_ex_y.  
+  E_r_data_reply_ex(ra_r_key_y, index_req_y, sealed_e_return_y) @E_r_data_reply_ex_y 
+  & ra_r_key_y = ra_r_key_x
+      ==> #E_r_data_reply_ex_x =  #E_r_data_reply_ex_y)
+"
+
+// -------------------------------------------------------------------------------- TARGET PROPERTY
+
+/* 
+ 
+ For each session and reseacher's request index there should be a unique sealed value returned by BI-SGX   
+
+*/
+
+
+lemma sealing_replay_plain:
+" All ra_r_key_x index_req_x #RCHR_data_rcv_x
+      ra_r_key_y index_req_y #RCHR_data_rcv_y. 
+
+RCHR_data_rcv(ra_r_key_x, index_req_x) @RCHR_data_rcv_x
+& RCHR_data_rcv(ra_r_key_y, index_req_y) @RCHR_data_rcv_y
+& not(index_req_x = index_req_y)
+==>
+
+Ex  sealed_e_return_a #E_r_data_reply_ex_a 
+    sealed_e_return_b #E_r_data_reply_ex_b. 
+ 
+ E_r_data_reply_ex(ra_r_key_x, index_req_x, sealed_e_return_a) @E_r_data_reply_ex_a
+
+  & (All index_req_t sealed_e_return_t #E_r_data_reply_ex_t.  
+  E_r_data_reply_ex(ra_r_key_x, index_req_t, sealed_e_return_t) @E_r_data_reply_ex_t 
+      ==> #E_r_data_reply_ex_a =  #E_r_data_reply_ex_t)
+
+
+ & E_r_data_reply_ex(ra_r_key_y, index_req_y, sealed_e_return_b) @E_r_data_reply_ex_b
+
+   & (All index_req_t sealed_e_return_t #E_r_data_reply_ex_t.  
+  E_r_data_reply_ex(ra_r_key_y, index_req_t, sealed_e_return_t) @E_r_data_reply_ex_t 
+      ==> #E_r_data_reply_ex_b =  #E_r_data_reply_ex_t)
+
+
+ & not(sealed_e_return_a = sealed_e_return_b)
+"
+
+end

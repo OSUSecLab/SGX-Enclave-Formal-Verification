@@ -1,0 +1,436 @@
+theory heartbeat
+begin
+
+
+/*
+ About: Remote Patient Monitoring -- heartbeat protocol.
+ Paper: https://ieeexplore.ieee.org/document/8566004 
+ status -- Complete
+ Run command:
+    tamarin-prover --heuristic=s --stop-on-trace=DFS hb.spthy --prove   
+
+=============================================================================
+summary of summaries:
+
+analyzed: hb.spthy
+
+  RA_k_is_secret_reuse (all-traces): verified (17 steps)
+  setup_above_all_reuse (all-traces): verified (66 steps)
+  honest_run_single_p_id_full_plain (exists-trace): verified (59 steps)
+  increasing_update_property (all-traces): falsified - found trace (16 steps)
+  is_decreasing_update_possible (all-traces): falsified - found trace (15 steps)
+
+==============================================================================
+
+~ 2m 23s
+
+
+*/
+
+
+// multiset allows +1 operation on counter values 
+builtins: multiset, symmetric-encryption, hashing
+
+// comparision operations Less than, Equal, and Greater or equal
+restriction Less:   "All x y #i. Less(x,y) @ i ==> Ex z. x + z = y"
+restriction Equality:  "All x y #i. Eql(x,y) @i ==> x = y"
+restriction Geq:   "All x y #i. Geq(x,y) @ i ==> ((Ex z. x = y + z) | x = y)"
+
+
+// Using pointers to maintain memories was originally suggested by Benjamin Kiesl --- https://groups.google.com/g/tamarin-prover/c/XAf-mO86d2Y/m/-3ri-zEaAwAJ
+// We modified the suggestion for our case
+
+// Restriction over global counter state variable for consistent read/write operation
+
+// old global counter state values (pointer) should not be allowed to read  
+restriction FreedMemoryCannotBeAccessed:
+    "All owner pointer pointer_new val val_old val_new #i #j. 
+    Read(owner, pointer, val) @ i 
+  & Free(owner, pointer, pointer_new, val_old, val_new) @ j ==> #i < #j"
+
+
+// Each global counter state value (pointer) should be updated only once 
+restriction MemoryCanBeFreedOnlyOnce:
+    "All owner pointer pointer_new1 val_old1 val_new1 pointer_new2 val_old2 val_new2  #i #j. 
+    Free(owner, pointer, pointer_new1, val_old1, val_new1) @ i 
+  & Free(owner, pointer, pointer_new2, val_old2, val_new2) @ j ==> #i = #j"
+
+
+// ------------------Trusted Broker (TB)
+// Acronym hb == heartbeat
+
+
+// Setup device IDs and Remote Attestation (RA) Key 
+rule TB_setup [color=#33D1FF]:
+    
+    [Fr(~device_id), Fr(~k)  ]
+  
+  --[ TB_setup(~device_id, ~k)]->
+    [ Priv_mem_TB1(~device_id, ~k, '1'), 
+      RA_shared_key(~device_id,~k) ]
+
+
+// In total TB sends 3 signals -- 2 active signal, and one last revoked signal 
+// is_revoked =  '0' ==> active signal
+rule TB_hb_signal1 [color=#DBF6FA]:
+
+    let counter =  counter_prev +'1' //   '1' + '1'
+        is_revoked = '0'
+        enc_data = senc{counter, is_revoked}~k
+        gcm_tag = senc{h(enc_data)}~k
+    in
+    [Priv_mem_TB1(~device_id, ~k, counter_prev)]
+  
+  --[TB_hb_signal1(~device_id, ~k, counter, is_revoked) ]->
+  
+    [Priv_mem_TB2(~device_id, ~k, counter),
+     Out(<enc_data, gcm_tag>) ]
+
+
+rule TB_hb_signal2 [color=#DBF6FA]:
+
+    let counter = counter_prev +'1' // = '1' + '1' + '1'
+        is_revoked = '0'
+        enc_data = senc{counter, is_revoked}~k
+        gcm_tag = senc{h(enc_data)}~k
+    in
+    [Priv_mem_TB2(~device_id, ~k, counter_prev)] //  counter_prev = '1' + '1'
+  
+  --[TB_hb_signal2(~device_id, ~k, counter, is_revoked) ]->
+   
+    [Priv_mem_TB3(~device_id, ~k, counter),
+      Out(<enc_data, gcm_tag>) ]
+
+
+// is_revoked =  '1' ==> last inactive signal
+rule TB_hb_signal3 [color=#DBF6FA]:
+
+    let counter = counter_prev +'1'
+        is_revoked = '1'
+        enc_data = senc{counter, is_revoked}~k
+        gcm_tag = senc{h(enc_data)}~k
+    in
+    [Priv_mem_TB3(~device_id, ~k, counter_prev)]
+
+  --[TB_hb_signal3(~device_id, ~k, counter, is_revoked) ]->
+    
+    [Out(<enc_data, gcm_tag>),
+    End_tb() ]
+
+
+// ------------------Health Care Provider (HCP) SGX enclave
+
+
+// Association tree L1 -- process
+// each setup starts a new process
+// Pass on the secure RA session key (k) to the enclave 
+rule L1_HCPC_process [color=#DF9881]:
+     let 
+     valG_init = '1'
+     in 
+    [ Fr(~p_id),
+      RA_shared_key(~device_id,~k),
+      Fr(~ptrG)
+      ]
+
+  --[ L1_HCPC_process(~p_id, ~device_id, ~k, ~ptrG, valG_init),
+      Process(~p_id) // to enfoce single process in honest run
+       ]->
+    
+    [ !Start_E_threads(~p_id, ~k),
+      !GlobalVar(~p_id, ~ptrG,  valG_init)
+    ]
+
+
+// Start of ecall -- heartbeat_process
+// Step 1: Decrypt and verify the encrypted signal
+
+// Multiple threads are allowed in the SGX configuation 
+
+rule E_decrypt [color=#E5E8E8]:
+    let enc_signal = senc{r_rcvd, is_revoked_rcvd}k 
+    in 
+    [ Fr(~t_id),
+      !Start_E_threads(p_id, k),
+      !GlobalVar(p_id, ptrG, valG),
+       In(<enc_signal, gcm_tag>)]
+
+  --[ Eql(gcm_tag, senc{h(enc_signal)}k),
+      Read(p_id, ptrG, valG),
+      E_decrypt(p_id, ~t_id, k, ptrG, valG, r_rcvd, is_revoked_rcvd),
+      Thread(p_id, ~t_id), // to enforce single thread in honest run
+      E_decrypt_memOn(p_id, ~t_id, k, r_rcvd, is_revoked_rcvd) // used in one of the helper lemma of safe version
+
+      ]->
+    
+    [EPC_decrypt_check(p_id, ~t_id, k, r_rcvd, is_revoked_rcvd)]
+
+
+// Step 2 -- Branch pass: Compare signal counter value (r_rcvd) with the global counter state variable (valG) 
+
+// Here p_id pattern matching is in work -- 
+// the GlobalVar and EPC_decrypt_check fact's p_id should match 
+
+rule E_check_p [color=#F7E6C5]:
+    [ EPC_decrypt_check(p_id, ~t_id, k, r_rcvd, is_revoked_rcvd),
+      !GlobalVar(p_id, ptrG, valG)]
+
+  --[ Less(valG, r_rcvd),
+      Read(p_id, ptrG, valG),
+      CheckPassGlobalRead(p_id, ptrG, valG),
+      E_check_p(p_id, ~t_id, k, ptrG, valG, r_rcvd, is_revoked_rcvd) ]->
+    
+    [EPC_check_update(p_id, ~t_id, k, r_rcvd, is_revoked_rcvd)]
+
+
+// Step 2 -- Branch fail: Compare signal counter value (r_rcvd) with the global counter state variable (valG) 
+// log status as REPLAY
+rule E_check_f [color=#F7E6C5]:
+    [ EPC_decrypt_check(p_id, ~t_id, k, r_rcvd, is_revoked_rcvd),
+      !GlobalVar(p_id, ptrG, valG)]
+
+  --[ Geq(valG, r_rcvd),
+      Read(p_id, ptrG, valG),
+      E_check_f(p_id, ~t_id, k, ptrG, valG, r_rcvd, is_revoked_rcvd, 'REPLAY')]->
+    
+    []
+
+
+// Step 3: Update global counter state variable to the recent received signal counter value 
+rule E_update [color=#D1F2EB]:
+    [ !GlobalVar(p_id, ptrG, valG),
+      Fr(~ptrG_new), 
+      EPC_check_update(p_id, ~t_id, k, r_rcvd, is_revoked_rcvd)// implicit pattern match ptrG
+    ]
+
+  --[ Free(p_id, ptrG, ~ptrG_new, valG, r_rcvd),
+      E_update(p_id, ~t_id, k,  ptrG,  valG, ~ptrG_new, r_rcvd, is_revoked_rcvd),
+      State_update(p_id, r_rcvd)
+    ]->
+    
+    [!GlobalVar(p_id, ~ptrG_new, r_rcvd), 
+    // update rmax with r_rcvd
+    EPC_update_status(p_id, ~t_id, k, r_rcvd, is_revoked_rcvd)
+    ]
+    
+
+// Step 4 -- Branch active: Check the subscription activeness flag (is_revoked_rcvd)   
+// log the status as 'SUCCESS'
+rule E_active [color=#F7E6C5]:
+    [ EPC_update_status(p_id, ~t_id, k, r_rcvd, is_revoked_rcvd),
+      !GlobalVar(p_id, ptrG, valG) ]
+
+  --[ Eql(is_revoked_rcvd, '0'),
+      Read(p_id, ptrG, valG),
+      E_active(p_id, ~t_id, k, ptrG, valG, r_rcvd, is_revoked_rcvd, 'SUCCESS'),
+      State_active(valG)]->
+
+    []
+
+
+// Step 4 -- Branch inactive: Check the subscription an activeness flag (is_revoked_rcvd) 
+// log the status as 'REVOKED'    
+rule E_inactive [color=#F7E6C5]:
+    [ EPC_update_status(p_id, ~t_id, k, r_rcvd, is_revoked_rcvd),
+    !GlobalVar(p_id, ptrG, valG) ]
+
+  --[ Eql(is_revoked_rcvd, '1'),
+      Read(p_id, ptrG, valG),
+      E_inactive(p_id, ~t_id, k, ptrG, valG, r_rcvd, is_revoked_rcvd , 'REVOKED')]->
+
+    []
+
+
+/*
+
+ tamarin-prover --heuristic=s --stop-on-trace=DFS hb.spthy --prove=RA_k_is_secret_reuse --prove=setup_above_all_reuse 
+
+ RA_k_is_secret_reuse (all-traces): verified (17 steps)
+ setup_above_all_reuse (all-traces): verified (66 steps)
+
+  ~ 3 sec
+*/
+
+
+// Helper Lemma -- The RA session key remains secret for each ecall
+lemma RA_k_is_secret_reuse [use_induction, reuse]:
+"
+
+All p_id t_id k ptrG valG r_rcvd is_revoked_rcvd #i.
+E_decrypt(p_id, t_id, k, ptrG, valG, r_rcvd, is_revoked_rcvd) @i 
+
+==> not (Ex #r. !KU(k) @r )
+    
+"
+
+// helper lemma -- All read and write operations over global counter state variable
+// requires creation of the variable before it 
+lemma setup_above_all_reuse [use_induction, reuse]:
+"
+All p_id ptrG valG ptrG2 ptrG_new2 valG2 valG_new2 #r #f. 
+ Read(p_id, ptrG, valG) @r 
+ & Free(p_id, ptrG2, ptrG_new2, valG2, valG_new2) @f
+ ==> 
+Ex ptrG3 device_id k #s. L1_HCPC_process(p_id, device_id, k, ptrG3, '1') @s & #s < #r & #s < #f 
+"
+
+
+
+
+// Honest run of the complete run of Heartbeat flow
+// Helps in verifying correct syntax and intended protocol run behavior 
+
+// tamarin-prover --heuristic=s --stop-on-trace=DFS hb.spthy --prove=RA_k_is_secret_reuse --prove=honest_run_single_p_id_full_plain
+
+lemma honest_run_single_p_id_full_plain:
+exists-trace
+      "
+      Ex
+      device_id 
+      k 
+      process_id
+
+      #tb_s
+      val_init_rmax
+      #hcpc_s
+
+      counter1
+      is_revoked1 
+      ptr_rmax1
+      #tb_hb1
+      t_id1
+      #hcpc_decrypt1
+      #hcpc_counter_check_pass1
+      ptr_rmax2
+      #hcpc_counter_update1
+      #hcpc_active1
+
+
+      counter2
+      is_revoked2
+      #tb_hb2
+      t_id2
+      #hcpc_decrypt2
+      #hcpc_counter_check_pass2
+      ptr_rmax3
+      #hcpc_counter_update2
+      #hcpc_active2
+
+
+      counter3
+      is_revoked3
+      #tb_hb3
+      t_id3
+      #hcpc_decrypt3
+      #hcpc_counter_check_pass3
+      ptr_rmax4
+      #hcpc_counter_update3
+      #hcpc_revoked3
+      .
+
+       counter1 = '1'+'1'
+       & is_revoked1 = '0'
+
+       // enforce only one process for optimization
+       & (All process_id1 process_id2 #i #j.
+         Process(process_id1) @i
+       & Process(process_id2) @j ==> #i = #j  )
+
+
+       & TB_setup(device_id, k) @tb_s
+       & L1_HCPC_process(process_id, device_id, k, ptr_rmax1, val_init_rmax) @hcpc_s
+
+       & TB_hb_signal1(device_id, k, counter1, is_revoked1) @tb_hb1
+       & E_decrypt(process_id, t_id1, k, ptr_rmax1, val_init_rmax, counter1, is_revoked1) @hcpc_decrypt1
+       & E_check_p(process_id, t_id1, k, ptr_rmax1, val_init_rmax,  counter1, is_revoked1) @hcpc_counter_check_pass1
+       & not(ptr_rmax1 = ptr_rmax2) 
+       & E_update(process_id, t_id1, k, ptr_rmax1, val_init_rmax, ptr_rmax2, counter1, is_revoked1) @hcpc_counter_update1
+       & E_active(process_id, t_id1, k, ptr_rmax2, counter1, counter1, is_revoked1, 'SUCCESS') @hcpc_active1
+       
+       & counter2 = '1'+'1'+'1'
+       & is_revoked2 = '0'
+       
+       & TB_hb_signal2(device_id, k, counter2, is_revoked2) @tb_hb2
+       & E_decrypt(process_id, t_id2, k, ptr_rmax2, counter1, counter2, is_revoked2) @hcpc_decrypt2
+       & E_check_p(process_id, t_id2, k, ptr_rmax2, counter1,  counter2, is_revoked2) @hcpc_counter_check_pass2
+       & not(ptr_rmax2 = ptr_rmax3) 
+       & E_update(process_id, t_id2, k, ptr_rmax2, counter1, ptr_rmax3, counter2, is_revoked2) @hcpc_counter_update2
+       & E_active(process_id, t_id2, k, ptr_rmax3, counter2, counter2, is_revoked2, 'SUCCESS') @hcpc_active2
+       
+       & counter3 = '1'+'1'+'1'+'1'
+       & is_revoked3 = '1'
+
+       & TB_hb_signal3(device_id, k, counter3, is_revoked3) @tb_hb3
+       & E_decrypt(process_id, t_id3, k, ptr_rmax3, counter2, counter3, is_revoked3) @hcpc_decrypt3
+       & E_check_p(process_id, t_id3, k, ptr_rmax3,  counter2, counter3, is_revoked3) @hcpc_counter_check_pass3
+       & not(ptr_rmax3 = ptr_rmax4)
+       & E_update(process_id, t_id3, k, ptr_rmax3, counter2, ptr_rmax4, counter3, is_revoked3) @hcpc_counter_update3
+       & E_inactive(process_id, t_id3, k, ptr_rmax4, counter3, counter3, is_revoked3, 'REVOKED') @hcpc_revoked3
+       
+      "
+
+// -------------------------------------------------------------------------------- TARGET PROPERTIES
+ 
+
+
+/* tamarin-prover --heuristic=s --stop-on-trace=DFS hb.spthy --prove=RA_k_is_secret_reuse --prove=setup_above_all_reuse --prove=increasing_update_property 
+ ==============================================================================
+summary of summaries:
+
+analyzed: hb.spthy
+
+  RA_k_is_secret_reuse (all-traces): verified (17 steps)
+  setup_above_all_reuse (all-traces): verified (66 steps)
+  honest_run_single_p_id_full_plain (exists-trace): analysis incomplete (1 steps)
+  increasing_update_property (all-traces): falsified - found trace (16 steps)
+  is_decreasing_update_possible (all-traces): analysis incomplete (1 steps)
+
+==============================================================================
+~3 sec
+
+*/
+
+// Check if the state variable monotonically increases with each enclave call. 
+// Tamarin show an attack graph exploiting multiple threads with replay of same signal to synchronize the execution until the check instruction and update the same signal counter value in the global state variable.
+
+lemma increasing_update_property [use_induction]:
+"
+All p_id t_id k ptrG valG ptrG_new valG_new #u1.
+E_update(p_id, t_id, k, ptrG, valG, ptrG_new, valG_new, '0') @u1 
+ ==> 
+ (Ex z. valG_new = valG + z)  // the counter should always be incresing
+ 
+"
+
+/* tamarin-prover --heuristic=s --stop-on-trace=DFS hb.spthy --prove=RA_k_is_secret_reuse --prove=setup_above_all_reuse --prove=is_decreasing_update_possible 
+
+==============================================================================
+summary of summaries:
+
+analyzed: hb.spthy
+
+  RA_k_is_secret_reuse (all-traces): verified (17 steps)
+  setup_above_all_reuse (all-traces): verified (66 steps)
+  honest_run_single_p_id_full_plain (exists-trace): analysis incomplete (1 steps)
+  increasing_update_property (all-traces): analysis incomplete (1 steps)
+  is_decreasing_update_possible (all-traces): falsified - found trace (15 steps)
+
+==============================================================================
+
+~ 7s
+*/
+
+// To explore the attack further, we specifically query if the state variable can be decreased. 
+// Tamarin reports this by carefully syncing enclave execution before the update instruction and replaying old signal over an state update with later signal.
+
+lemma is_decreasing_update_possible:
+"
+All p_id t_id k ptrG valG ptrG_new valG_new #u1.
+E_update(p_id, t_id, k, ptrG, valG, ptrG_new, valG_new, '0') @u1 
+ & (Ex z. valG = valG_new + z)  // the counter should always be incresing
+ ==> F 
+ 
+"
+
+
+end
