@@ -1,7 +1,7 @@
 SGXVerif: Towards Formal Verification of State Continuity for Enclave Programs 
 ==============================================================================
 
-We model state continuity components of three open source projects [Hyper-ledger Sawtooth](https://www.hyperledger.org/use/sawtooth), [SGXEnabledAccess](https://github.com/fishermano/SGXEnabledAccess), [BI-SGX](https://bi-sgx.net/). 
+We model state continuity components of three open source projects [Hyperledger Sawtooth](https://www.hyperledger.org/use/sawtooth), [SGXEnabledAccess](https://github.com/fishermano/SGXEnabledAccess), [BI-SGX](https://bi-sgx.net/). 
 
 Notes:
 -------------------
