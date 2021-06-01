@@ -37,7 +37,8 @@ restriction Equality:  "All x y #i. Eql(x,y) @i ==> x = y"
 restriction Geq:   "All x y #i. Geq(x,y) @ i ==> ((Ex z. x = y + z) | x = y)"
 
 
-// Using pointers to maintain memories was originally suggested by Benjamin Kiesl --- https://groups.google.com/g/tamarin-prover/c/XAf-mO86d2Y/m/-3ri-zEaAwAJ
+// Using pointers to maintain efficient memories was used in https://cispa.saarland/group/cremers/tools/tamarin/WPA2/index.html
+// A simple explanation could be found at https://groups.google.com/g/tamarin-prover/c/XAf-mO86d2Y/m/-3ri-zEaAwAJ
 // We modified the suggestion for our case
 
 // Restriction over global counter state variable for consistent read/write operation
