@@ -9,12 +9,12 @@ This repo contains [Tamarin](https://tamarin-prover.github.io/) models for [Inte
 
 ## Proofs
 
-1. The proofs were run with Tamarin prover (v1.7.0) on a machine with a quad-core 1.80GHz Intel© Core i7-8550U CPU and 16 GB RAM, and Ubuntu Linux 18.04. One of the proof also requires python3 installation. Tamarin (v1.7.0) can be installed from the [Tamarin GitHub repo](https://github.com/tamarin-prover/tamarin-prover).
+1. The proofs were run with Tamarin prover (v1.7.0) on a machine with a quad-core 1.80GHz Intel© Core i7-8550U CPU and 16 GB RAM, and Ubuntu Linux 18.04. Proof of SGXEnabledAccess also requires python3 installation. Tamarin (v1.7.0) can be installed from the [Tamarin GitHub repo](https://github.com/tamarin-prover/tamarin-prover).
 2. For each Tamarin model, the Tamarin heuristics and trace algorithm parameters are specified in the model files as comments.
 
-## Model Primitives used our work
+## Model Primitives used in our work
 
-### SGX Primitives
+### SGX primitives
 
 1. Enclave call (ecall) threads
 2. Association Network of SGX entities (ISV, Remote Users, SGX machines (platforms), enclave-binary, enclave-processes, owner specific identities for key derivation and monotonic counters)
@@ -31,23 +31,23 @@ This repo contains [Tamarin](https://tamarin-prover.github.io/) models for [Inte
 3. Database (Read only)
 4. Random number Input 
 
-Out of the above primitives Monotonic Counters, Locks, Local/Global variables, and the programming primitives can be reused directly. Others require manual integration based on the code component under consideration.     
+Out of the above primitives monotonic counters, locks, local/global variables, and the programming primitives can be reused directly. Other require manual integration based on the code component under consideration.     
 
 Sawtooth uses all the SGX primitives with single threaded ecalls.
 
-SGXEnabledAccess uses multi-threaded ecalls, local/global variables, SGX threat model, Key derivation, locks, loops, and branching
+SGXEnabledAccess uses multi-threaded ecalls, local/global variables, SGX threat model, key derivation, locks, loops, and branching
 
 BI-SGX uses single threaded ecalls and all the primitives except Loops and Branching.
 
 ## Process of SGX application formal verification using Tamarin prover.
 
-1. [Install](https://tamarin-prover.github.io/manual/book/002_installation.html) Tamarin prover and learn how to use it from the [Tamarin Manual](https://tamarin-prover.github.io/manual/tex/tamarin-manual.pdf), [Tamarin code examples](https://github.com/tamarin-prover/tamarin-prover/tree/develop/examples), [other research works](https://tamarin-prover.github.io/), [Excercise at VeryCrypto](https://github.com/aseemr/Indocrypt-VerifiedCrypto-Tutorials/blob/main/Tamarin/exercise_starter.md), [Exercise](https://github.com/benjaminkiesl/tamarin_toy_protocol) by Dr. Kiesl, Tutorials [Blog](https://hajji.org/en/crypto/verified-crypto/tamarin) [Video](https://youtu.be/XptJG19hDcQ)  
+1. [Install](https://tamarin-prover.github.io/manual/book/002_installation.html) Tamarin prover and learn how to use it from the [Tamarin Manual](https://tamarin-prover.github.io/manual/tex/tamarin-manual.pdf), [Tamarin code examples](https://github.com/tamarin-prover/tamarin-prover/tree/develop/examples), [other research works](https://tamarin-prover.github.io/), [Exercise at VeryCrypto](https://github.com/aseemr/Indocrypt-VerifiedCrypto-Tutorials/blob/main/Tamarin/exercise_starter.md), [Exercise](https://github.com/benjaminkiesl/tamarin_toy_protocol) by Dr. Kiesl, Tutorials [Blog](https://hajji.org/en/crypto/verified-crypto/tamarin) [Video](https://youtu.be/XptJG19hDcQ)  
 2. Identify the control flow of your SGX application’s code component and the desired properties that you hope to verify.
 3. Identify the code variables, trusted and untrusted boundaries, and the SGX primitives required to build the formal model of the code component. Explore the models in this repo to find what primitives can you reproduced for your model.
 4. Start with a simple model and ensure correct syntax and protocol behavior using [executability lemmas](https://tamarin-prover.github.io/manual/tex/tamarin-manual.pdf)
-5. Write properties in First-Order Logic; Get Initial results; validate the trace result into application code if possible; gradually add other functionalities, and repeat the process. If you encounter non-termination see the section below. 
+5. Write properties in First-Order Logic; Get Initial results; validate the trace result into application code if possible; gradually add other functionalities, and repeat the process. If you encounter non-termination, see the section below. 
 
-## Potential approaches to resolve non-Termination
+## Potential approaches to resolve non-termination
 
 1. Run Tamarin Interactive GUI without `--prove` flag. Observe if all the [partial deconstructions](https://tamarin-prover.github.io/manual/book/008_precomputation.html) are resolved. if not the [Auto-Source paper](https://hal.archives-ouvertes.fr/hal-02903620/document) and the [TLS1.3 thesis](https://pure.royalholloway.ac.uk/portal/files/33074422/2018HoylandJGPhD.pdf) can help.  
 2. Try all Tamarin binary parameters `--stop-on-trace` and `--heuristic` to see if any combination terminates the proof in a reasonable time (learned by experience; this can vary for different model sizes and complexity). [UT Tamarin](https://github.com/benjaminkiesl/ut_tamarin) could be useful here.  
@@ -57,9 +57,9 @@ BI-SGX uses single threaded ecalls and all the primitives except Loops and Branc
     1. Manually reason about why the property you expect should hold in the model
     2. Observe the proof steps in [Tamarin interactive GUI](https://tamarin-prover.github.io/manual/book/003_example.html) and identify the pattern of the proof or observe if the proof process is resolving a set of similar constraint repeatedly
 
-    Based on the above methods build [helper lemmas](https://tamarin-prover.github.io/manual/book/010_advanced-features.html) or customised heuristic using [an oracle script](https://tamarin-prover.github.io/manual/book/010_advanced-features.html)       
+    Based on the above methods build [helper lemmas](https://tamarin-prover.github.io/manual/book/010_advanced-features.html) or customized heuristic using [an oracle script](https://tamarin-prover.github.io/manual/book/010_advanced-features.html)       
 
-6. Xor equation theory and Rule variants —An adversary can not rule out the possibility of Fr(a) from one rule to be the same as Fr(b) from another rule. — [google group chat](https://groups.google.com/g/tamarin-prover/c/irq09b70WS8)
+6. Xor equation theory and Rule variants -- An adversary can not rule out the possibility of Fr(a) from one rule to be the same as Fr(b) from another rule. — [google group chat](https://groups.google.com/g/tamarin-prover/c/irq09b70WS8)
 7. Go through [Tamarin Google Forum](https://groups.google.com/g/tamarin-prover) and ask for help. The forum history contains many modeling tips and tricks. 
 8. Also, note that proving a property for a given model is undecidable. Therefore, it is impossible to ensure termination in all cases.
 
