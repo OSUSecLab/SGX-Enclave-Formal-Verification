@@ -66,7 +66,7 @@ BI-SGX uses single threaded ecalls and all the primitives except Loops and Branc
 ## Remarks about Formal Modeling
 
 1. [SoK: Computer-Aided Cryptography](https://eprint.iacr.org/2019/1393.pdf) — describes the state of Formal Methods in a broader perspective.  
-2. The equivalence of an application code and the constructed model is made by the best human effort (without proof). Therefore, verification results for any constructed model convey knowledge about the model rather than the application module code that it represents. In my opinion, this approximation (aka verification gap) is not a barrier to the utility of formal verification because verification results, especially flaws, can be double-checked back in the application code. Moreover, proving the property of an approximate model serves the purpose of formal verification well enough in many real-world cases. 
+2. The equivalence of an application code and the constructed model is made by the best human effort (without proof). Therefore, verification results for any constructed model convey knowledge about the model rather than the application code that it represents. In my opinion, this approximation (aka verification gap) is not a big barrier to the utility of formal verification because verification results: especially flaws can be double-checked back in the application code. Moreover, proving the property of an approximate model serves the purpose of formal verification well enough in many real-world cases. 
 3. It is very important to understand the assumptions of the model. "A proof is only as good as its model" ([source](https://pure.royalholloway.ac.uk/portal/files/33074422/2018HoylandJGPhD.pdf), page 43)
 
 ## Acknowledgment
