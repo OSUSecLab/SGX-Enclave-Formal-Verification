@@ -59,16 +59,16 @@ BI-SGX uses single threaded ecalls and all the primitives except Loops and Branc
 
     Based on the above methods build [helper lemmas](https://tamarin-prover.github.io/manual/book/010_advanced-features.html) or customized heuristic using [an oracle script](https://tamarin-prover.github.io/manual/book/010_advanced-features.html)       
 
-6. Xor equation theory and Rule variants -- An adversary can not rule out the possibility of Fr(a) from one rule to be the same as Fr(b) from another rule. — [google group chat](https://groups.google.com/g/tamarin-prover/c/irq09b70WS8)
+6. Check if the XOR equation theory and the corresponging rule variants are correct. [google group chat](https://groups.google.com/g/tamarin-prover/c/irq09b70WS8) ("An adversary can not rule out the possibility of Fr(a) from one rule to be the same as Fr(b) from another rule.")
 7. Go through [Tamarin Google Forum](https://groups.google.com/g/tamarin-prover) and ask for help. The forum history contains many modeling tips and tricks. 
 8. Also, note that proving a property for a given model is undecidable. Therefore, it is impossible to ensure termination in all cases.
 
 ## Remarks about Formal Modeling
 
-1. [SoK: Computer-Aided Cryptography](https://eprint.iacr.org/2019/1393.pdf) — describes the state of Formal Methods in a broader perspective.  
+1. The paper -- [SoK: Computer-Aided Cryptography](https://eprint.iacr.org/2019/1393.pdf) describes the state of Formal Methods in a broader perspective.  
 2. The equivalence of an application code and the constructed model is made by the best human effort (without proof). Therefore, verification results for any constructed model convey knowledge about the model rather than the application code that it represents. In my opinion, this approximation (aka verification gap) is not a big barrier to the utility of formal verification because verification results: especially flaws can be double-checked back in the application code. Moreover, proving the property of an approximate model serves the purpose of formal verification well enough in many real-world cases. 
 3. It is very important to understand the assumptions of the model. "A proof is only as good as its model" ([source](https://pure.royalholloway.ac.uk/portal/files/33074422/2018HoylandJGPhD.pdf), page 43)
 
 ## Acknowledgment
 
-We thank Cas Cremers, Jonathan Hoyland, Benjamin Kiesl, Jannik Dreier, Kevin Milner and Tamarin community at the Google forum for providing insight into Tamarin and for active support and suggestions during our research process.
+We thank Cas Cremers, Jonathan Hoyland, Benjamin Kiesl, Jannik Dreier, Kevin Milner and the Tamarin community at the Google forum for providing insight into Tamarin. 
