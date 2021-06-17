@@ -14,22 +14,39 @@ This repo contains [Tamarin](https://tamarin-prover.github.io/) models for [Inte
 
 ## Model Primitives used in our work
 
-### SGX primitives
+<table>
 
-1. Enclave call (ecall) threads
-2. Association Network of SGX entities (ISV, Remote Users, SGX machines (platforms), enclave-binary, enclave-processes, owner specific identities for key derivation and monotonic counters)
-3. Monotonic Counters
-4. Local/Global variables
-5. SGX threat model (Table 1 in the paper)
-6. Key Derivation
-7. Sealing
+      <colgroup>
+       <col span="1" style="width: 50%;">
+       <col span="1" style="width: 50%;">
+       
+    </colgroup>
 
-### Programming primitives
+<tr><th> SGX primitives </th><th> Programming primitives </th></tr>
+<tr><td align="left" valign="top">
 
-1. Locks
-2. Loops and Branching
-3. Database (Read only)
-4. Random number Input 
+<ol>
+  
+<li> Enclave call (ecall) threads  </li>
+<li> Association Network of SGX entities  (ISV, Remote Users, SGX machines (platforms), enclave-binary, enclave-processes, owner specific identities for key derivation and monotonic counters) </li> 
+<li> Monotonic Counters </li>
+<li> Local/Global variables </li>
+<li> SGX threat model (Table 1 in the paper) </li>
+<li> Key Derivation </li>
+<li> Sealing </li>
+
+</ol>
+</td><td align="left" valign="top">
+
+<ol>
+<li> Locks </li>
+<li> Loops and Branching </li>
+<li> Database (Read only) </li>
+<li> Random number Input      </li>
+
+</ol>
+</td></tr> </table>
+
 
 Out of the above primitives monotonic counters, locks, local/global variables, and the programming primitives can be reused directly. Other require manual integration based on the code component under consideration.     
 
