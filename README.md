@@ -16,11 +16,11 @@ This repo contains [Tamarin](https://tamarin-prover.github.io/) models for [Inte
 
 <table>
 
-      <colgroup>
-       <col span="1" style="width: 50%;">
-       <col span="1" style="width: 50%;">
-       
-    </colgroup>
+<colgroup>
+ <col span="1" style="width: 50%;">
+ <col span="1" style="width: 50%;">
+
+</colgroup>
 
 <tr><th> SGX primitives </th><th> Programming primitives </th></tr>
 <tr><td align="left" valign="top">
