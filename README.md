@@ -1,6 +1,6 @@
 # Towards Formal Verification of State Continuity for Enclave Programs
 
-This repo contains [Tamarin](https://tamarin-prover.github.io/) models for [Intel SGX](https://software.intel.com/content/www/us/en/develop/topics/software-guard-extensions.html) application components of three open source projects: [Hyperledger Sawtooth](https://www.hyperledger.org/use/sawtooth), [SGXEnabledAccess](https://github.com/fishermano/SGXEnabledAccess), [BI-SGX](https://bi-sgx.net/). These models can be helpful to verify the properties of any other SGX application. Each model uses many SGX primitives, some of which are directly reusable. Other primitive requires customized integration as per application requirement. Details of the three open-source projects, the SGX threat model, the working principles behind the SGX primitives are described in our paper (TBD).
+This repo contains [Tamarin](https://tamarin-prover.github.io/) models for [Intel SGX](https://software.intel.com/content/www/us/en/develop/topics/software-guard-extensions.html) application components of three open source projects: [Hyperledger Sawtooth](https://www.hyperledger.org/use/sawtooth), [SGXEnabledAccess](https://github.com/fishermano/SGXEnabledAccess), [BI-SGX](https://bi-sgx.net/). These models can be helpful to verify the properties of any other SGX application. Each model uses many SGX primitives, some of which are directly reusable. Other primitive requires customized integration as per application requirement. Details of the three open-source projects, the SGX threat model, the working principles behind the SGX primitives are described in our [USENIX Security '21 paper](https://www.usenix.org/conference/usenixsecurity21/presentation/jangid).
 
 ## File structure of this repo
 
@@ -31,7 +31,7 @@ This repo contains [Tamarin](https://tamarin-prover.github.io/) models for [Inte
 <li> Association Network of SGX entities  (ISV, Remote Users, SGX machines (platforms), enclave-binary, enclave-processes, owner specific identities for key derivation and monotonic counters) </li> 
 <li> Monotonic Counters </li>
 <li> Local/Global variables </li>
-<li> SGX threat model (Table 1 in the paper) </li>
+<li> SGX threat model (Table 1 in the [paper](https://www.usenix.org/conference/usenixsecurity21/presentation/jangid)) </li>
 <li> Key Derivation </li>
 <li> Sealing </li>
 
@@ -85,7 +85,7 @@ BI-SGX uses single threaded ecalls and all the primitives except Loops and Branc
 
 1. The paper -- [SoK: Computer-Aided Cryptography](https://eprint.iacr.org/2019/1393.pdf) describes the state of Formal Methods in a broader perspective.  
 2. The equivalence of an application code and the constructed model is made by the best human effort (without proof). Therefore, verification results for any constructed model convey knowledge about the model rather than the application code that it represents. In my opinion, this approximation (aka verification gap) is not a big barrier to the utility of formal verification because verification results: especially flaws can be double-checked back in the application code. Moreover, proving the property of an approximate model serves the purpose of formal verification well enough in many real-world cases. 
-3. It is very important to understand the assumptions of the model. "A proof is only as good as its model" ([source](https://pure.royalholloway.ac.uk/portal/files/33074422/2018HoylandJGPhD.pdf), page 43)
+3. It is very important to understand the assumptions involved in the model and the properties proved. "A proof is only as good as its model" ([source](https://pure.royalholloway.ac.uk/portal/files/33074422/2018HoylandJGPhD.pdf), page 43)
 
 ## Acknowledgment
 
