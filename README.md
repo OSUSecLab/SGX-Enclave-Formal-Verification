@@ -31,7 +31,7 @@ This repo contains [Tamarin](https://tamarin-prover.github.io/) models for [Inte
 <li> Association Network of SGX entities  (ISV, Remote Users, SGX machines (platforms), enclave-binary, enclave-processes, owner specific identities for key derivation and monotonic counters) </li> 
 <li> Monotonic Counters </li>
 <li> Local/Global variables </li>
-<li> SGX threat model (Table 1 in the [paper](https://www.usenix.org/conference/usenixsecurity21/presentation/jangid)) </li>
+<li> SGX threat model (Table 1 in the <a href="https://www.usenix.org/conference/usenixsecurity21/presentation/jangid">paper</a>)</li>
 <li> Key Derivation </li>
 <li> Sealing </li>
 
